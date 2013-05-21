@@ -105,7 +105,7 @@ sub show_db
 
   # raw data dump
   open (STRINGS, '>strings.csv') or die;
-  binmode (STRINGS, 'encoding(:UTF-8)');
+  # data is already encoded as UTF-8, no binmode needed! binmode (STRINGS, 'encoding(:UTF-8)');
   print "writing strings.csv\n";
   print STRINGS join ("\t", qw(ident idx value)), "\n";
 
