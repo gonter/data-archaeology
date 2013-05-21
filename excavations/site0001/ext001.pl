@@ -13,6 +13,7 @@ use strict;
 
 use lib '.';
 use Encode;
+use Data::UUID;
 use Data::Dumper;
 $Data::Dumper::Indent= 1;
 
@@ -69,11 +70,13 @@ sub main_function
   $db_pers->parse ('PERS.DAT', 1);
   my $cnt= @{$db_pers->{'records'}};
   # print "db_pers: recs=[$cnt] ", Dumper ($db_pers);
+  dump_file ('db_pers', $db_pers);
 
   my $st_pers= &analyze_records ($db_pers, \%all, 'pers');
   my $cnt_pers= scalar keys %all;
   print __LINE__, " cnt_pers=[$cnt_pers]\n";
   # print "stats pers: ", Dumper ($st_pers);
+  dump_file ('st_pers', $st_pers);
 
   # === Table TIT.DAT =========================
   my $db_tit= new DBF::Unknown1;
@@ -89,14 +92,10 @@ sub main_function
   # print "stats tit: ", Dumper ($st_tit);
   &combine_stats (\%cats, 'pers' => $st_pers, 'title' => $st_tit);
 
-  open (DUMP, '>out.dump') or die;
-  print "writing out.dump\n";
-  print DUMP "cats: ", Dumper (\%cats);
-  print DUMP "all: ", Dumper (\%all);
-  close (DUMP);
+  &dump_file ('cats', \%cats);
+  &dump_file ('all',  \%all);
 
   &show_db (\%cats, \%all);
-
 }
 
 sub show_db
@@ -104,14 +103,33 @@ sub show_db
   my $cats= shift;
   my $db= shift;
 
-  my $UID= &get_UID;
+  # raw data dump
+  open (STRINGS, '>strings.csv') or die;
+  binmode (STRINGS, 'encoding(:UTF-8)');
+  print "writing strings.csv\n";
+  print STRINGS join ("\t", qw(ident idx value)), "\n";
+
+  my $out_dir= 'out';
+  my $content_dir= 'OEBPS';
+  my $txt_dir= 'Text';
+  my $x_dir= join ('/', $out_dir, $content_dir, $txt_dir);
+
+  unless (-d $x_dir)
+  {
+    print "creating [$x_dir]\n";
+    system ("mkdir -p '$x_dir'");
+  }
+
+  my $epub= new X_EPUB ('out_dir' => $out_dir, 'content_dir' => $content_dir);
+
   my @sections= ();
   foreach my $id (sort { $a <=> $b } keys %$db)
   {
     my $epub_id= sprintf ("Author_%04d", $id);
     my $fnm_xhtml= sprintf ("Text/Author_%04d.xhtml", $id);
-    my $fnm_out= 'out/OEBPS/' . $fnm_xhtml;
-    open (FO, '>', $fnm_out) or die;
+    my $fnm_out= join ('/', $out_dir, $content_dir, $fnm_xhtml);
+    open (FO, '>', $fnm_out) or die "cant write [$fnm_out]";
+    # binmode (FO, ':utf8');
 
     my $section=
     {
@@ -120,7 +138,7 @@ sub show_db
     };
 
     push (@sections, $section);
-    print "writing $fnm_xhtml [$fnm_out]\n";
+    print "writing $epub_id [$fnm_out]\n";
 
     my $obj= $db->{$id};
     # print "obj($id}: ", Dumper ($obj);
@@ -147,7 +165,7 @@ sub show_db
     }
 
 print FO <<EOX;
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.1//EN"
   "http://www.w3.org/TR/xhtml11/DTD/xhtml11.dtd">
 
@@ -174,8 +192,10 @@ EOX
     close (FO);
   }
   
-  &write_content_opf ($UID, \@sections);
-  &write_toc_ncx ($UID, \@sections);
+  close (STRINGS);
+
+$epub->finish (\@sections);
+
 }
 
 sub print_one_table
@@ -188,13 +208,36 @@ print FO <<EOX;
     <tbody>
 EOX
 
+  my $obj_id= undef;
+
   foreach my $row (@$t)
   {
+    my ($field_idx, $field_name, $field_value)= @$row;
+
+    # cleanup field values, there are Ctrl-Z, leading and trailing blanks
+    $field_value =~ s/\x1A//g;
+    $field_value =~ s/^  *//g;
+    $field_value =~ s/  *$//g;
+
+    if ($field_idx eq '000')
+    {
+      $obj_id= $field_value
+    }
+
+    if (defined ($obj_id))
+    {
+      print STRINGS join ("\t", $obj_id, $field_idx, $field_value), "\n";
+    }
+    else
+    {
+      print "STRANGE\n";
+    }
+
 print FO <<EOX;
 <tr>
-  <td>$row->[0]</td>
-  <td>$row->[1]</td>
-  <td>$row->[2]</td>
+  <td>$field_idx</td>
+  <td>$field_name</td>
+  <td>$field_value</td>
 </tr>
 EOX
 
@@ -255,6 +298,7 @@ sub combine_stats
 }
 
 # transform records into a more structured format
+# while doing this, also convert CP-850 encoded text into UTF-8
 sub analyze_records
 {
   my $db= shift;
@@ -346,6 +390,7 @@ sub read_cat
   my $fnm= shift;
 
   open (FI, $fnm) or die;
+  # this file is encoded in some PC format
   my $found= 0;
   while (<FI>)
   {
@@ -373,6 +418,19 @@ sub read_cat
 
   }
   close (FI);
+}
+
+sub dump_file
+{
+  my $label= shift;
+  my $var= shift;
+
+  my $fnm= 'dump.'. $label;
+  open (DUMP, '>'. $fnm) or die;
+  # binmode (DUMP, ':utf8');
+  print "writing [$fnm]\n";
+  print DUMP "$label: ", Dumper ($var);
+  close (DUMP);
 }
 
 # ----------------------------------------------------------------------------
@@ -417,28 +475,68 @@ sub hex_dump
 
 # EPUB generation ========================================
 
-sub get_UID
+package X_EPUB;
+
+sub new
 {
+  my $class= shift;
+  my %par= @_;
+
+  my $self= {};
+  bless $self, $class;
+
+  foreach my $par (keys %par)
+  {
+    $self->{$par}= $par{$par};
+  }
+  $self->{'uuid_gen'}= my $ug= new Data::UUID;
+
+  my $t_uuid= $ug->create ();
+  $self->{'uuid'}= $ug->to_string ($t_uuid);
+
+  $self;
+}
+
+sub finish
+{
+  my $epub= shift;
+  my $sections= shift;
+
+  $epub->write_content_opf ($sections);
+  $epub->write_toc_ncx ($sections);
+  $epub->write_epub_static ();
+}
+
+sub obsolete_get_UID
+{
+  my $epub= shift;
   my $t= time ();
-  my $UID1= "f48d29a4-44f4-4834-b5fb-f21c33f90332";
-  my $UID2= sprintf ("f48d29a4-44f4-4834-b5fb-f2%08lx33", $t);
+
+  my $UID_fmt= "f48d29a4-44f4-4834-b5fb-f2%08lx%02x";
+  my $UID1= sprintf ($UID_fmt, 0x1c33f903, 0x32);
+  my $UID2= sprintf ($UID_fmt, $t, 0x33);
   print "uid1=[$UID1]\n";
-  print "uid1=[$UID2]\n";
+  print "uid2=[$UID2]\n";
+  $epub->{'uid2'}= $UID2;
+
   $UID2;
 }
 
 sub write_content_opf
 {
-  my $uid= shift;
+  my $epub= shift;
   my $sections= shift;
 
+  my $uuid= $epub->{'uuid'};
+
   open (FO, '>out/OEBPS/content.opf') or die;
+  # binmode (FO, ':utf8');
   print "writing out/OEBPS/content.opf\n";
   print FO <<EOX;
-<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<?xml version='1.0' encoding='utf-8' standalone='yes'?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookId" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
-    <dc:identifier id="BookId" opf:scheme="UUID">urn:uuid:$uid</dc:identifier>
+    <dc:identifier id="BookId" opf:scheme="UUID">urn:uuid:$uuid</dc:identifier>
     <dc:title>bismas</dc:title>
     <dc:creator opf:role="aut">unknown</dc:creator>
     <dc:language>de</dc:language>
@@ -476,18 +574,21 @@ EOX
 
 sub write_toc_ncx
 {
-  my $uid= shift;
+  my $epub= shift;
   my $sections= shift;
 
+  my $uuid= $epub->{'uuid'};
+
   open (FO, '>out/OEBPS/toc.ncx') or die;
+  # binmode (FO, ':utf8');
   print "writing out/OEBPS/toc.ncx\n";
   print FO <<EOX;
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version='1.0' encoding='utf-8'?>
 <!DOCTYPE ncx PUBLIC "-//NISO//DTD ncx 2005-1//EN"
    "http://www.daisy.org/z3986/2005/ncx-2005-1.dtd">
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1">
 <head>
-   <meta name="dtb:uid" content="urn:uuid:$uid" />
+   <meta name="dtb:uid" content="urn:uuid:$uuid" />
    <meta name="dtb:depth" content="0" />
    <meta name="dtb:totalPageCount" content="0" />
    <meta name="dtb:maxPageNumber" content="0" />
@@ -518,6 +619,36 @@ EOX
 </navMap>
 </ncx>
 EOX
+}
+
+# TODO: unfinished
+sub write_epub_static
+{
+  my $epub= shift;
+
+  my $out_dir= $epub->{'out_dir'};
+
+  open (FO1, '>' . $out_dir . '/mimetype') or die;
+  print FO1 "application/epub+zip\n";
+  close (FO1);
+
+ 
+  my $mi_dir= $out_dir . '/META-INF';
+  unless (-d $mi_dir)
+  {
+    mkdir ($mi_dir);
+  }
+
+  open (FO2, '>' . $mi_dir . '/container.xml') or die;
+  print FO2 <<EOX;
+<?xml version='1.0' encoding='UTF-8'?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+    <rootfiles>
+        <rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/>
+   </rootfiles>
+</container>
+EOX
+  close (FO2);
 }
 
 =cut
