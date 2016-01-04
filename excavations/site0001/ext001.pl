@@ -104,7 +104,7 @@ sub show_db
   my $db= shift;
 
   # raw data dump
-  open (STRINGS, '>strings.csv') or die;
+  open (STRINGS, '>', 'strings.csv') or die 'can not write to [strings.csv]';
   # data is already encoded as UTF-8, no binmode needed! binmode (STRINGS, 'encoding(:UTF-8)');
   print "writing strings.csv\n";
   print STRINGS join ("\t", qw(ident idx value)), "\n";
@@ -148,6 +148,7 @@ sub show_db
 
     # print "="x72, "\n";
     my ($author, $auth_rec)= &prepare_one_sub_record ($cats, $p_recs[$#p_recs]);
+    my $author_html= cleanup ($author);
     if (defined ($author))
     {
       $section->{'title'}= $author;
@@ -171,17 +172,18 @@ print FO <<EOX;
 
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
-  <title>$author</title>
+  <title>$author_html</title>
 </head>
 
 <body>
-<h1>$author</h1>
+<h1>$author_html</h1>
 EOX
 
     &print_one_table (*FO, $auth_rec);
     foreach my $book (@books)
     {
-      print FO "<h2>$book->[0]</h2>\n";
+      my $book_title= cleanup ($book->[0]);
+      print FO "<h2>$book_title</h2>\n";
       &print_one_table (*FO, $book->[1]);
     }
 
@@ -198,14 +200,28 @@ $epub->finish (\@sections);
 
 }
 
+sub cleanup
+{
+  my $field_value= shift;
+
+    $field_value =~ s/\&/\&amp;/g;
+    $field_value =~ s/</\&lt;/g;
+    $field_value =~ s/>/\&gt;/g;
+    $field_value =~ s/\x1A//g;
+    $field_value =~ s/^  *//g;
+    $field_value =~ s/  *$//g;
+
+  $field_value;
+}
+
 sub print_one_table
 {
   local *FO= shift;
   my $t= shift;
 
 print FO <<EOX;
-  <table border="1" cellpadding="1" cellspacing="1">
-    <tbody>
+<table border="1" cellpadding="1" cellspacing="1">
+  <tbody>
 EOX
 
   my $obj_id= undef;
@@ -215,9 +231,7 @@ EOX
     my ($field_idx, $field_name, $field_value)= @$row;
 
     # cleanup field values, there are Ctrl-Z, leading and trailing blanks
-    $field_value =~ s/\x1A//g;
-    $field_value =~ s/^  *//g;
-    $field_value =~ s/  *$//g;
+    $field_value= cleanup ($field_value);
 
     if ($field_idx eq '000')
     {
@@ -234,18 +248,18 @@ EOX
     }
 
 print FO <<EOX;
-<tr>
-  <td>$field_idx</td>
-  <td>$field_name</td>
-  <td>$field_value</td>
-</tr>
+    <tr>
+      <td>$field_idx</td>
+      <td>$field_name</td>
+      <td>$field_value</td>
+    </tr>
 EOX
 
   }
 
 print FO <<EOX;
-    </tbody>
-  </table>
+  </tbody>
+</table>
 
 EOX
 
@@ -389,7 +403,7 @@ sub read_cat
   my $section= shift;
   my $fnm= shift;
 
-  open (FI, $fnm) or die;
+  open (FI, '<:raw', $fnm) or die "can not fread from fnm=[$fnm]";
   # this file is encoded in some PC format
   my $found= 0;
   while (<FI>)
@@ -426,7 +440,7 @@ sub dump_file
   my $var= shift;
 
   my $fnm= 'dump.'. $label;
-  open (DUMP, '>'. $fnm) or die;
+  open (DUMP, '>', $fnm) or die;
   # binmode (DUMP, ':utf8');
   print "writing [$fnm]\n";
   print DUMP "$label: ", Dumper ($var);
@@ -529,7 +543,7 @@ sub write_content_opf
 
   my $uuid= $epub->{'uuid'};
 
-  open (FO, '>out/OEBPS/content.opf') or die;
+  open (FO, '>', 'out/OEBPS/content.opf') or die;
   # binmode (FO, ':utf8');
   print "writing out/OEBPS/content.opf\n";
   print FO <<EOX;
@@ -579,7 +593,7 @@ sub write_toc_ncx
 
   my $uuid= $epub->{'uuid'};
 
-  open (FO, '>out/OEBPS/toc.ncx') or die;
+  open (FO, '>', 'out/OEBPS/toc.ncx') or die;
   # binmode (FO, ':utf8');
   print "writing out/OEBPS/toc.ncx\n";
   print FO <<EOX;
@@ -628,7 +642,7 @@ sub write_epub_static
 
   my $out_dir= $epub->{'out_dir'};
 
-  open (FO1, '>' . $out_dir . '/mimetype') or die;
+  open (FO1, '>', $out_dir . '/mimetype') or die;
   print FO1 "application/epub+zip\n";
   close (FO1);
 
@@ -639,7 +653,7 @@ sub write_epub_static
     mkdir ($mi_dir);
   }
 
-  open (FO2, '>' . $mi_dir . '/container.xml') or die;
+  open (FO2, '>', $mi_dir . '/container.xml') or die;
   print FO2 <<EOX;
 <?xml version='1.0' encoding='UTF-8'?>
 <container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
