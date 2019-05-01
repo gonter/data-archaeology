@@ -11,8 +11,9 @@ http://en.wikipedia.org/wiki/Data_archaeology would not exist...
 
 Anyway, let's start with the latest one (1)...
 
-Notes:
-1: Data Archeology applies also to the the scripts that were used to
+## Notes
+
+* Data Archeology applies also to the scripts that were used to
 recover data in the first place.  I have no idea any more, what I wrote
 earlier or if it might be useful for someone else.  If I come across
 one of them, I'll try to make them accessible too.
